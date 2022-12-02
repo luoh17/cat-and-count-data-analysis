@@ -1,0 +1,228 @@
+---
+title: "STAT536-HW1"
+author: "Coco_Luo"
+date: '2022-09-29'
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Question 1
+Determine which variables should be excluded from the analysis up front. Examples include “hours”, “wage”, “lwage.” These are variables that should not be seen as explanatory for the binary response “inlf”.
+
+- I choose to delete “hours”, “wage”, and “lwage" because those explanatory variables are directly related to the outcome variable. As long as those variables are greater than 0, we know 'inf' must be 1. Also, I noticed that "nwifeinc" is equal to (famimc - wage * hours)/1000, and the correlation between "nwifeinc" and "famimc" is as high as 0.94. Therefore, I would only ise one of them to build the model. I will remove "nwifeinc"
+
+I have 17 explanatory variables remains, which are: 
+```{r, echo = F, message = F}
+library(foreign)
+library(corrplot)
+labor = read.dta("MROZ.dta")
+labor  = as.data.frame(labor)
+
+# delete "hours", "wage", "lwage" "nwifeinc" from the dataframe
+labor1 = labor[, setdiff(colnames(labor), c("hours", "wage", "lwage","nwifeinc"))]
+labor2 = labor[, c(1, 3:6, 8:19, 22)]
+colnames(labor1)
+```
+
+# Question 2
+
+Determine if you need to take any transformation of the remaining explanatory variables.
+For example, “age” should be used as “log(age)”, etc.
+
+- We need to do transformations on variables that possess a non linear relationship with the response variable. And as I visualized each variabnle, I saw variables age and hushrs are factor variables which possess a non-linear relationship with the binary outcome, I decided to do a log transformation on those variables. Last but not the least, I standardized the explanatory variables so that they are more generalized.
+
+
+```{r}
+labor2[,"age"] = log(labor2[,"age"])
+labor2[,"husage"] = log(labor2[,"husage"])
+labor2[,"hushrs"] = log(labor2[,"hushrs"])
+```
+
+```{r}
+data= labor2
+for (i in 2:18){
+  m = data[,i]
+  data[,i] = (m-mean(m))/sd(m)
+}
+```
+
+```{r}
+# correlations
+for (i in 2:18){
+  cat(colnames(data)[i], "=", cor(data[,1], data[,i]), "\n")
+}
+```
+
+# Question 3
+Determine an initial logistic regression $M_0$ using a heuristic argument of your choice.
+You could include the explanatory variables with the highest absolute correlation with the response. You can come up with another idea if you like.
+
+- I would like to start from the model with explanatory variables having highest absolute correlation with the response. The threshold I chose here is 0.1. Thus, my initial model is M_0: $$logit(P(inlf=1)) = \beta_0 + \beta_1\cdot kidslt6+\beta_2\cdot educ+\beta_3\cdot repwage+\beta_4\cdot  mtr+ \beta_5\cdot exper+\beta_6\cdot expersq$$
+
+# Question 4
+Fit the model $M_0$ and make sure there are no numerical errors when the MLEs are calculated. Give a formula for the fitted model and discuss its validity in term of standardized residuals, fitted values, etc. Produce relevant plots.
+
+- From the summary statistics of the initial model I determined in question 3, it seems that mtr and expersq are not statistically significant, so I will delete them from my current model. Now, my fitted model is
+M_0: $$logit(P(inlf=1)) = 1.74 - 0.37kidslt6+0.47educ+3.57repwage+0.43exper$$
+Which makes sense as for each additional child younger than 6 years old a women has, the probability of her being in labor force decrease. And for more years of schooling she has, the probability of her being in labor force will increase.
+
+
+```{r}
+inlf = data$inlf
+# fit the model
+M_0 <- glm(inlf ~ kidslt6+educ+repwage+exper,
+         family = binomial(link = logit), data = data)
+summary(M_0)
+```
+
+```{r}
+# fitted values
+idx = 1:length(data$inlf)
+plot(idx,M_0$fitted.values,xlab="Observation number",ylab="Fitted probabilities")
+points(idx[data$inlf==0],M_0$fitted.values[data$inlf==0],col="blue")
+points(idx[data$inlf==1],M_0$fitted.values[data$inlf==1],col="red")
+abline(h=0.5)
+```
+```{r}
+#Standardized residuals
+res = (data$inlf-M_0$fitted.values)/sqrt(M_0$fitted.values*(1-M_0$fitted.values))
+#Plot it
+plot(1:length(data$inlf),res,xlab="Observation number",ylab="Standardized Residual")
+outlier = (1:length(data$inlf))[abs(res)>=2]
+points(outlier,res[outlier],col='red')
+```
+
+For the first fitted values plot, values with outcome = 0 is marked as blue and values with outcome = 0 is marked as red. In addition, I plot out the outiers that is outside of the (-2,2) interval. There are about 27 outliers. Under the assumption of independence of the standardized residuals, I compute the probability of getting a value more extreme than the observed sum of the squares of the standardized residuals to be about 0, indicating our model can be further improved. 
+
+# Question 5
+Use the function `step` to improve $M_0$ in terms of AIC. Let $M$ be the final model returned by `step`.
+
+```{r}
+ aic_M0 = M_0$deviance+2*length(coef(M_0))
+ bic_M0 = M_0$deviance+log(length(data$inlf))*length(coef(M_0))
+ aic_M0
+ bic_M0
+```
+
+```{r}
+library(leaps)
+library(stats)
+empty = glm(inlf~1,family=binomial(link=logit),data=data)
+all = glm(inlf~.,family=binomial(link=logit),data=data)
+M=step(empty, direction='forward', scope=formula(all), trace=0)
+summary(M)
+M$deviance+log(length(data$inlf))*length(coef(M))
+```
+
+
+The AIC of $M_0$ is 522 and BIC is 545. Then I use the step function to perform a forward and backward selection using the full model and the null model as the bounds.
+
+The final model M: 
+$$\begin{aligned}logit(P(inlf=1))=1.79 + 3.40\cdot repwage + 0.60\cdot exper + 0.45\cdot educ - 0.64\cdot kidslt6 \\- 0.64 · log(age) - 1.03 · log(huswage) - 0.64 · mtr - 0.50 · log(hushrs) + 0.39 · faminc \end{aligned}$$ 
+
+And we have an improved model M with AIC 490.91, and BIC 537.15.
+
+# Question 6 
+
+Consider all the models that are obtained by deleting one variable from $M$. Perform likelihood ratio tests to see whether any variables should be removed from $M$.
+
+To see if each variable contained in the current model is related to the outcomne, I remove faminc and fit $M_1$ because from the last questions, only faminc is not statistically significant at level 0.01. A likelihood ratio test is used to see whether we can removed this variable from $M$ or not.
+
+```{r}
+M1 = update(M,. ~ . - faminc)
+#drop1(M1,test="Chisq")
+#1-pchisq(M1$deviance-M$deviance,1)
+summary(M1)
+#M1$deviance+log(length(data$inlf))*length(coef(M1))
+```
+
+We see that the p-value associated with the removal of ”faminc” is greater than 0.01 level, so we fail to reject the hypothesis that the coefficient of ”faminc” in M is not zero. So I would consider removing ”faminc” and obtain the model M1.All the variables in M1 are statistically significant. The AIC of M1 is 491.12, slightly larger than the AIC of M. But the BIC of M1 is 532.74 which is smaller than the BIC of M. Thus, I pick the smaller model with regard to BIC. M1 is shown as follows:
+
+$$\begin{aligned}logit(P(inlf=1))= 1.79 + 3.41 \cdot repwage + 0.56\cdot exper + 0.45\cdot  educ - 0.63\cdot kidslt6\\ - 0.62\cdot log(age) -0.95\cdot log(huswage) - 0.90\cdot mtr - 0.47\cdot hushrs\end{aligned}$$
+I repeated this process for all the other variables, the p value shows that the removal is less than the threshold, and I fail to reject. 
+
+# Question 7 
+Compute the BIC scores of the same models. Which model would you pick with respect to BIC?
+
+```{r}
+# bic of same models - further delete variables
+M2 = update(M1,. ~ . - repwage)
+M2$deviance+M2$rank*log(length(inlf))
+M2 = update(M1,. ~ . - exper)
+M2$deviance+ M2$rank*log(length(inlf))
+M2 = update(M1,. ~ . - educ)
+M2$deviance+M2$rank*log(length(inlf))
+M2 = update(M1,. ~ . - kidslt6)
+M2$deviance+M2$rank*log(length(inlf))
+M2 = update(M1,. ~ . - age)
+M2$deviance+M2$rank*log(length(inlf))
+M2 = update(M1,. ~ . - huswage)
+M2$deviance+M2$rank*log(length(inlf))
+M2 = update(M1,. ~ . - mtr)
+M2$deviance+M2$rank*log(length(inlf))
+M2 = update(M1,. ~ . - hushrs)
+M2$deviance+M2$rank*log(length(inlf))
+```
+
+The results shows that no BIC is smaller than the BIC of $M_1$, I would still stick with $M_1$.
+
+# Question 8 
+Now calculate the Brier scores of the same models. Which model would you pick now? What is the error rate of your preferred model?
+
+```{r}
+mean((inlf-M1$fitted.values)^2)
+ M3 = update(M1,. ~ . - repwage)
+ mean((inlf-M3$fitted.values)^2)
+ M3 = update(M1,. ~ . - exper)
+ mean((inlf-M3$fitted.values)^2)
+ M3 = update(M1,. ~ . - educ)
+ mean((inlf-M3$fitted.values)^2)
+ M3 = update(M1,. ~ . - kidslt6)
+ mean((inlf-M3$fitted.values)^2)
+ M3 = update(M1,. ~ . - age)
+ mean((inlf-M3$fitted.values)^2)
+ M3 = update(M1,. ~ . - huswage)
+ mean((inlf-M3$fitted.values)^2)
+ M3 = update(M1,. ~ . - mtr)
+ mean((inlf-M3$fitted.values)^2)
+ M3 = update(M1,. ~ . - hushrs)
+ mean((inlf-M3$fitted.values)^2)
+```
+
+The results shows that no Brier score is smaller than the Brier score of $M_1$, I would still stick with $M_1$.
+
+# Question 9
+Draw conclusions about what you learned from your analysis. Give a formula for your final model and interpret the regression coefficients (an interpretation in term of log-odds is fine). Discuss the statistical significance of each variable selected in the model.
+
+From the above analysis, I will choose $M_1$ as my final model where each variable selected in the model is statistically significant. And I refit it on the original data before centering and scaling for better interpretation.
+
+$$\begin{aligned}logit(P(inlf=1)) = 29.7 + 1.4\cdot repwage + 0.07\cdot exper + 0.2\cdot educ \\
+- 1.2\cdot kidslt6 - 3.24\cdot log(age) -0.2\cdot huswage -10.9 \cdot mtr - 1.6 \cdot hushrs \end{aligned}$$
+”repwage”: for each unit of increase in ”repwage”, the odds of a woman being part of the labor force are expected to increase by a factor of $e^{(1.4)} = 4.1$, holding all other variables constant.
+
+”exper”: for each unit of increase in ”exper”, the odds of a woman being part of the labor force are expected to increase by a factor of $e^{(0.07)} = 1.1$, holding all other variables constant.
+
+”educ”: for each addition year of ”education”, the odds of a woman being part of the labor force are expected to increase by a factor of $e^{(0.2)} = 1.2$, holding all other variables constant.
+
+”kidslt6”: for each addition kids under 6, the odds of a woman being part of the labor force are expected to decrease by a factor of $e^{(1.2)} = 3.3$, holding all other variables constant.
+
+”age”: for each year of increase in ”log(age)”, the odds of a woman being part of the labor force are expected to decrease by a factor of $e^{(3.24)} = 25.5$, holding all other variables constant.
+
+”huswage”: for each unit of increase in ”huswage”, the odds of a woman being part of the labor force are expected to decrease by a factor of $e^{(0.2)} = 1.2$, holding all other variables constant.
+
+”mtr”: for each unit of increase in ”mtr”, the odds of a woman being part of the labor force are expected to decrease by a factor of $e^{(10.9)}$, holding all other variables constant.
+
+”hushrs”: for each hours of increase in ”hushrs”, the odds of a woman being part of the labor force are expected to decrease by a factor of $e^{(1.6)} = 5$, holding all other variables constant.
+
+
+
+
+
+
+
